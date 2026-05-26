@@ -26,6 +26,7 @@
 | PostgreSQL | — | Banco de dados relacional |
 | Lombok | — | Geração de código boilerplate |
 | Springdoc OpenAPI | 3.0.3 | Documentação Swagger automática |
+| Bean Validation | 4.0.6 | Validação de dados de entrada |
 | Maven | — | Gerenciador de dependências |
 
 ---
@@ -34,6 +35,12 @@
 
 ```
 src/main/java/br/com/phamtecnologia/apiclientes/
+│
+├── configurations/
+│   └── CorsConfiguration.java  # Configuração de CORS
+│
+├── dtos/
+│   └── ClienteDto.java         # DTO com validações de entrada
 │
 ├── enums/
 │   ├── TipoCliente.java        # PESSOA_FISICA | PESSOA_JURIDICA
@@ -51,7 +58,30 @@ src/main/java/br/com/phamtecnologia/apiclientes/
 │
 └── sql/
     └── script.sql              # DDL: criação da tabela clientes
+
+src/main/resources/
+└── application.properties      # Configurações da aplicação
 ```
+
+---
+
+## ⚙️ application.properties
+
+Todas as configurações ficam centralizadas em `src/main/resources/application.properties`:
+
+```properties
+spring.application.name=api-clientes
+
+server.port=8081
+
+database.host=jdbc:postgresql://localhost:5432/bd-api-clientes
+database.user=postgres
+database.pass=root
+
+cors.allowed=http://localhost:4200,http://localhost:3000
+```
+
+> ⚠️ **Atenção:** em produção, nunca commite credenciais reais. Use variáveis de ambiente ou um cofre de segredos.
 
 ---
 
@@ -76,16 +106,6 @@ CREATE TABLE clientes (
 );
 ```
 
-A conexão está configurada em `ConnectionFactory.java`:
-
-```java
-var host = "jdbc:postgresql://localhost:5432/bd-api-clientes";
-var user = "postgres";
-var pass = "root";
-```
-
-> ⚠️ **Atenção:** em produção, nunca deixe credenciais no código. Use variáveis de ambiente ou `application.properties`.
-
 ---
 
 ## ▶️ Como Executar
@@ -100,12 +120,14 @@ cd api-clientes
 # 2. Crie o banco de dados no PostgreSQL
 # (execute o script.sql mostrado acima)
 
-# 3. Execute a aplicação
+# 3. Ajuste as credenciais em src/main/resources/application.properties
+
+# 4. Execute a aplicação
 ./mvnw spring-boot:run
 ```
 
-A API estará disponível em: `http://localhost:8080`  
-Documentação Swagger: `http://localhost:8080/swagger-ui.html`
+A API estará disponível em: `http://localhost:8081`  
+Documentação Swagger: `http://localhost:8081/swagger-ui.html`
 
 ---
 
@@ -115,22 +137,27 @@ Documentação Swagger: `http://localhost:8080/swagger-ui.html`
 
 Cadastra um novo cliente no banco de dados.
 
-**Parâmetros (query string ou form):**
+**Corpo da requisição (JSON):**
 
-| Parâmetro | Tipo | Obrigatório | Exemplo |
-|---|---|---|---|
-| `nome` | String | ✅ | `João Silva` |
-| `email` | String | ✅ | `joao@email.com` |
-| `telefone` | String | ✅ | `11999998888` |
-| `tipo` | String | ✅ | `PESSOA_FISICA` |
+```json
+{
+  "nome":     "João da Silva",
+  "email":    "joao@email.com",
+  "telefone": "21999998888",
+  "tipo":     "PESSOA_FISICA"
+}
+```
+
+**Regras de validação:**
+
+| Campo | Regra |
+|---|---|
+| `nome` | Obrigatório. Entre 3 e 150 caracteres. |
+| `email` | Obrigatório. Deve estar em formato de e-mail válido. |
+| `telefone` | Obrigatório. Somente números: 2 dígitos de DDD + 9 dígitos (ex: `21999998888`). |
+| `tipo` | Obrigatório. Deve ser `PESSOA_FISICA` ou `PESSOA_JURIDICA`. |
 
 > O campo `status` é definido automaticamente como `ATIVO` no momento do cadastro.
-
-**Exemplo de chamada:**
-
-```
-POST http://localhost:8080/api/clientes/criar?nome=João Silva&email=joao@email.com&telefone=11999998888&tipo=PESSOA_FISICA
-```
 
 **Respostas:**
 
@@ -145,38 +172,75 @@ POST http://localhost:8080/api/clientes/criar?nome=João Silva&email=joao@email.
 
 ```
 ClienteController  →  ClienteRepository  →  ConnectionFactory  →  PostgreSQL
-     (HTTP)              (SQL/JDBC)            (Conexão)            (Banco)
+  (HTTP / DTO)          (SQL/JDBC)            (@Component)          (Banco)
 ```
 
 ### `ClienteController`
-Recebe a requisição HTTP, monta o objeto `Cliente` e delega ao repositório.
+Recebe o JSON da requisição via `@RequestBody`, usa `@Autowired` para injetar o repositório.
 
 ```java
 @RestController
 @RequestMapping("/api/clientes")
 public class ClienteController {
 
+    @Autowired
+    private ClienteRepository clienteRepository;
+
     @PostMapping("criar")
-    public String criar(@RequestParam String nome, ...) { ... }
+    public String criar(@RequestBody ClienteDto dto) { ... }
+}
+```
+
+### `ClienteDto`
+DTO com Bean Validation — representa e valida o corpo da requisição antes de chegar ao domínio.
+
+```java
+@Data
+public class ClienteDto {
+    @NotEmpty @Size(min = 3, max = 150)
+    private String nome;
+
+    @NotEmpty @Email
+    private String email;
+
+    @NotEmpty @Pattern(regexp = "^\\d{2}\\d{9}$")
+    private String telefone;
+
+    @NotEmpty @Pattern(regexp = "^(PESSOA_FISICA|PESSOA_JURIDICA)$")
+    private String tipo;
 }
 ```
 
 ### `ClienteRepository`
-Executa o `INSERT` usando `PreparedStatement` — protegido contra SQL Injection.
+Executa o `INSERT` com `PreparedStatement` via JDBC. A `ConnectionFactory` é injetada pelo Spring.
 
 ```java
-var statement = connection.prepareStatement("""
-    INSERT INTO clientes (nome, email, telefone, tipo, status)
-    VALUES (?, ?, ?, ?, ?)
-""");
+@Repository
+public class ClienteRepository {
+
+    @Autowired
+    private ConnectionFactory connectionFactory;
+
+    public void create(Cliente cliente) throws Exception {
+        try (var connection = connectionFactory.getConnection()) { ... }
+    }
+}
 ```
 
 ### `ConnectionFactory`
-Centraliza a criação da conexão JDBC seguindo o padrão *Factory Method*.
+Componente Spring que lê as credenciais do `application.properties` e fornece a conexão JDBC.
 
 ```java
-public static Connection getConnection() throws Exception {
-    return DriverManager.getConnection(host, user, pass);
+@Component
+public class ConnectionFactory {
+
+    @Value("${database.host}") private String host;
+    @Value("${database.user}") private String user;
+    @Value("${database.pass}") private String pass;
+
+    public Connection getConnection() throws Exception {
+        return DriverManager.getConnection(host, user, pass);
+    }
 }
 ```
 
@@ -201,22 +265,52 @@ public enum StatusCliente {
 }
 ```
 
-> Enums garantem que apenas valores válidos sejam atribuídos, gerando erro em tempo de compilação caso um valor inexistente seja usado.
+---
+
+## 🌐 Integração com o Frontend
+
+A API aceita requisições do frontend Angular (`web-clientes`) via `CorsConfiguration`. As origens permitidas são configuradas no `application.properties`:
+
+```properties
+cors.allowed=http://localhost:4200,http://localhost:3000
+```
+
+```java
+@Configuration
+@EnableWebMvc
+public class CorsConfiguration implements WebMvcConfigurer {
+
+    @Value("${cors.allowed}")
+    private String[] corsAllowed;
+
+    @Override
+    public void addCorsMappings(CorsRegistry registry) {
+        registry.addMapping("/**")
+                .allowedOrigins(corsAllowed)
+                .allowedMethods("POST", "PUT", "DELETE", "GET")
+                .allowedHeaders("*");
+    }
+}
+```
 
 ---
 
 ## 📚 Conceitos Aprendidos
 
-- **`@RestController`** — combina `@Controller` + `@ResponseBody`; o retorno do método vira o corpo da resposta HTTP
-- **`@RequestMapping`** — define o prefixo de rota da classe
-- **`@PostMapping`** — mapeia requisições `HTTP POST` para um método
-- **`@RequestParam`** — lê parâmetros enviados na URL ou no corpo do formulário
-- **`@Data` (Lombok)** — gera getters, setters, `equals`, `hashCode` e `toString` automaticamente
-- **`PreparedStatement`** — executa SQL parametrizado, prevenindo SQL Injection
-- **`try-with-resources`** — garante o fechamento automático da conexão mesmo em caso de exceção
-- **`CONSTRAINT CHECK`** — validação de valores diretamente no banco de dados
-- **`SERIAL`** — tipo PostgreSQL para IDs auto-incrementados
+- **`@RestController`** — combina `@Controller` + `@ResponseBody`
+- **`@RequestMapping` / `@PostMapping`** — mapeamento de rotas HTTP
+- **`@RequestBody`** — desserializa o corpo JSON da requisição para um objeto Java
+- **`@Component` / `@Repository`** — registra classes como beans gerenciados pelo Spring
+- **`@Autowired`** — injeção de dependência automática pelo Spring (IoC)
+- **`@Value("${chave}")`** — injeta propriedades do `application.properties`
+- **`@Data` (Lombok)** — gera getters, setters, `equals`, `hashCode` e `toString`
+- **`DTO`** — separa o contrato da API do modelo de domínio interno
+- **`Bean Validation`** — validações declarativas com `@NotEmpty`, `@Email`, `@Size`, `@Pattern`
+- **`PreparedStatement`** — SQL parametrizado, prevenindo SQL Injection
+- **`try-with-resources`** — fechamento automático da conexão JDBC
+- **`CORS`** — configuração para permitir requisições cross-origin do Angular
+- **`CONSTRAINT CHECK`** — validação de valores diretamente no PostgreSQL
 
 ---
 
-*Pham Tecnologia · Fullstack Java 
+*Pham Tecnologia · Fullstack Java — *
