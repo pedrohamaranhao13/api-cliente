@@ -28,9 +28,8 @@ public class ClienteController {
 
             clienteRepository.create(cliente);
 
-            return "Cliente cadastrado com sucesso";
-        }
-        catch (Exception e) {
+            return "Cliente " + cliente.getNome() +  " cadastrado com sucesso";
+        } catch (Exception e) {
             return "Erro ao cadastrado o cliente: " + e.getMessage();
         }
     }
@@ -39,8 +38,7 @@ public class ClienteController {
     public List<Cliente> consultar() {
         try {
             return clienteRepository.findAll();
-        }
-        catch (Exception e) {
+        } catch (Exception e) {
             e.printStackTrace();
             return null;
         }
@@ -61,12 +59,10 @@ public class ClienteController {
 
             if (clienteRepository.update(cliente)) {
                 return "Cliente atualizado com sucesso";
-            }
-            else {
+            } else {
                 return "Nenhum cliente foi encontrado para edfição. Verifique o ID informado";
             }
-        }
-        catch (Exception e)  {
+        } catch (Exception e) {
             return "Erro ao atualizar o cliente: " + e.getMessage();
         }
 
@@ -77,8 +73,7 @@ public class ClienteController {
         try {
             if (clienteRepository.delete(id)) {
                 return "Cliente deletado com sucesso";
-            }
-            else {
+            } else {
                 return "Nenhum cliente foi encontrado para exclusão. Verifique o ID informado.";
             }
         } catch (Exception e) {
@@ -90,8 +85,7 @@ public class ClienteController {
     public Cliente obter(@PathVariable int id) {
         try {
             return clienteRepository.findById(id);
-        }
-        catch (Exception e) {
+        } catch (Exception e) {
             e.printStackTrace();
             return null;
         }
